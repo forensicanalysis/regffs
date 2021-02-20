@@ -1,6 +1,6 @@
 // file generated at 2021-02-14T13:42:30Z
 
-package main
+package regffs
 
 import (
 	"encoding/binary"
