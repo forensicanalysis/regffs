@@ -1,6 +1,7 @@
 package regffs
 
 import (
+	"io/fs"
 	"log"
 	"os"
 	"testing"
@@ -12,10 +13,15 @@ func TestNew(t *testing.T) {
 		name string
 	}
 	tests := []struct {
-		name string
-		args args
+		name     string
+		args     args
+		sub      string
+		expected string
 	}{
-		{"TestFS", args{"testdata/NTUSER.DAT"}},
+		{"Test NTUSER.DAT", args{"testdata/NTUSER.DAT"}, "", "AppEvents/Schemes/Apps/.Default/SystemNotification"},
+		{"Test SAM", args{"testdata/SAM"}, "", "SAM/Domains/Account/Users/000001F4"},
+		{"Test SOFTWARE", args{"testdata/SOFTWARE"}, "Microsoft/Windows/CurrentVersion/Explorer", "Desktop"},
+		{"Test SYSTEM", args{"testdata/SYSTEM"}, "Select", "Current"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -23,9 +29,17 @@ func TestNew(t *testing.T) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			got, _ := New(f)
+			var fsys fs.FS
+			fsys, err = New(f)
+			if err != nil {
+				t.Error(err)
+			}
 
-			err = fstest.TestFS(got, "AppEvents/Schemes/Apps/.Default/SystemNotification")
+			if tt.sub != "" {
+				fsys, err = fs.Sub(fsys, tt.sub)
+			}
+
+			err = fstest.TestFS(fsys, tt.expected)
 			if err != nil {
 				t.Error(err)
 			}

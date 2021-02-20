@@ -131,37 +131,14 @@ func (f *File) ReadDir(n int) ([]fs.DirEntry, error) {
 
 	var entries []fs.DirEntry
 	if nk.NumberOfSubKeys() > 0 {
-		cell, err := getCell(int64(nk.SubKeysListOffset())+0x1000, f.r, f.regf)
-		if err == nil {
-			lhlf := cell.Data().(*SubKeyListLhLf)
-			for _, item := range lhlf.Items() {
-				scell, err := getCell(int64(item.NamedKeyOffset())+0x1000, f.r, f.regf)
-				if err != nil {
-					continue
-				}
-				entries = append(entries, &File{r: f.r, cell: scell, regf: f.regf})
-			}
-		}
+		entries = f.getSubkeys(int64(nk.SubKeysListOffset()) + 0x1000)
 	}
 	if nk.NumberOfValues() > 0 {
-		_, err := f.r.Seek(int64(nk.ValuesListOffset())+0x1000, io.SeekStart)
+		valueEntries, err := f.getValues(nk)
 		if err != nil {
 			return nil, err
 		}
-
-		valueListOffsets := make([]uint32, nk.NumberOfValues()+1)
-		_ = binary.Read(f, binary.LittleEndian, valueListOffsets)
-
-		for _, o := range valueListOffsets {
-			if o == 0xfffffff0 {
-				continue
-			}
-			cell, err := getCell(int64(o)+0x1000, f.r, f.regf)
-			if err != nil {
-				continue
-			}
-			entries = append(entries, &File{r: f.r, cell: cell, regf: f.regf})
-		}
+		entries = append(entries, valueEntries...)
 	}
 
 	var err error
@@ -181,6 +158,50 @@ func (f *File) ReadDir(n int) ([]fs.DirEntry, error) {
 	}
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, nil
+}
+
+func (f *File) getSubkeys(offset int64) []fs.DirEntry {
+	cell, err := getCell(offset, f.r, f.regf)
+	if err != nil {
+		return nil
+	}
+	var entries []fs.DirEntry
+	switch k := cell.Data().(type) {
+	case *SubKeyListRi:
+		for _, item := range k.Items() {
+			entries = append(entries, f.getSubkeys(int64(item.SubKeyListOffset())+0x1000)...)
+		}
+	case *SubKeyListLhLf:
+		for _, item := range k.Items() {
+			entries = append(entries, f.getSubkeys(int64(item.NamedKeyOffset())+0x1000)...)
+		}
+	case *NamedKey:
+		entries = append(entries, &File{r: f.r, cell: cell, regf: f.regf})
+	}
+	return entries
+}
+
+func (f *File) getValues(nk *NamedKey) ([]fs.DirEntry, error) {
+	_, err := f.r.Seek(int64(nk.ValuesListOffset())+0x1000, io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
+
+	valueListOffsets := make([]uint32, nk.NumberOfValues()+1)
+	_ = binary.Read(f, binary.LittleEndian, valueListOffsets)
+
+	var entries []fs.DirEntry
+	for _, o := range valueListOffsets {
+		if o == 0xfffffff0 {
+			continue
+		}
+		cell, err := getCell(int64(o)+0x1000, f.r, f.regf)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, &File{r: f.r, cell: cell, regf: f.regf})
+	}
 	return entries, nil
 }
 
