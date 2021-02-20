@@ -23,7 +23,7 @@ func TestNew(t *testing.T) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			got := New(f)
+			got, _ := New(f)
 
 			err = fstest.TestFS(got, "AppEvents/Schemes/Apps/.Default/SystemNotification")
 			if err != nil {
