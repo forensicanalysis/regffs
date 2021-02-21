@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 type Regffs struct {
-	r      io.ReadSeeker
+	reader io.ReadSeeker
 	regf   *Regf
 	header *FileHeader
 }
@@ -31,28 +34,27 @@ func New(f io.ReadSeeker) (*Regffs, error) {
 
 func (r *Regffs) Open(name string) (fs.File, error) {
 	offset := r.header.RootKeyOffset() + 0x1000
-	_, err := r.r.Seek(int64(offset), io.SeekStart)
+	_, err := r.reader.Seek(int64(offset), io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
 
 	cell := &HiveBinCell{}
-	err = cell.Decode(r.r, r.regf, r.regf)
+	err = cell.Decode(r.reader, r.regf, r.regf)
 	if err != nil {
 		return nil, err
 	}
 
-	root := &File{cell: cell, r: r.r, regf: r.regf}
+	root := &File{cell: cell, reader: r.reader, regf: r.regf}
 	if name == "." {
 		return root, nil
 	}
 	parts := strings.Split(name, "/")
-	for len(parts) > 0 {
-		info, err := findInfo(root, parts[0])
+	for i := 0; i < len(parts); i++ {
+		info, err := findInfo(root, parts[i])
 		if err != nil {
 			return nil, err
 		}
-		parts = parts[1:]
 		root = info.(*File)
 	}
 	return root, nil
@@ -72,10 +74,11 @@ func findInfo(root fs.ReadDirFile, name string) (fs.DirEntry, error) {
 }
 
 type File struct {
-	r         io.ReadSeeker
+	reader    io.ReadSeeker
 	cell      *HiveBinCell
 	regf      *Regf
 	dirOffset int
+	data      *bytes.Reader
 }
 
 func (f *File) Size() int64 {
@@ -100,9 +103,13 @@ func (f *File) Sys() interface{} {
 func (f *File) Name() string {
 	switch k := f.cell.Data().(type) {
 	case *NamedKey:
-		return strings.Trim(string(k.UnknownString()), "\x00")
+		return string(k.UnknownString())
 	case *SubKeyListVk:
-		return strings.Trim(string(k.ValueName()), "\x00")
+		name := string(k.ValueName())
+		if name == "" {
+			return "(default)"
+		}
+		return name
 	}
 	return "ERROR"
 }
@@ -162,7 +169,7 @@ func (f *File) ReadDir(n int) ([]fs.DirEntry, error) {
 }
 
 func (f *File) getSubkeys(offset int64) []fs.DirEntry {
-	cell, err := getCell(offset, f.r, f.regf)
+	cell, err := getCell(offset, f.reader, f.regf)
 	if err != nil {
 		return nil
 	}
@@ -177,30 +184,30 @@ func (f *File) getSubkeys(offset int64) []fs.DirEntry {
 			entries = append(entries, f.getSubkeys(int64(item.NamedKeyOffset())+0x1000)...)
 		}
 	case *NamedKey:
-		entries = append(entries, &File{r: f.r, cell: cell, regf: f.regf})
+		entries = append(entries, &File{reader: f.reader, cell: cell, regf: f.regf})
 	}
 	return entries
 }
 
 func (f *File) getValues(nk *NamedKey) ([]fs.DirEntry, error) {
-	_, err := f.r.Seek(int64(nk.ValuesListOffset())+0x1000, io.SeekStart)
+	_, err := f.reader.Seek(int64(nk.ValuesListOffset())+0x1000, io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
 
 	valueListOffsets := make([]uint32, nk.NumberOfValues()+1)
-	_ = binary.Read(f, binary.LittleEndian, valueListOffsets)
+	_ = binary.Read(f.reader, binary.LittleEndian, valueListOffsets)
 
 	var entries []fs.DirEntry
 	for _, o := range valueListOffsets {
 		if o == 0xfffffff0 {
 			continue
 		}
-		cell, err := getCell(int64(o)+0x1000, f.r, f.regf)
+		cell, err := getCell(int64(o)+0x1000, f.reader, f.regf)
 		if err != nil {
 			continue
 		}
-		entries = append(entries, &File{r: f.r, cell: cell, regf: f.regf})
+		entries = append(entries, &File{reader: f.reader, cell: cell, regf: f.regf})
 	}
 	return entries, nil
 }
@@ -209,29 +216,46 @@ func (f *File) Read(i []byte) (int, error) {
 	if string(f.cell.Identifier()) != "vk" {
 		return 0, syscall.EPERM
 	}
+
 	vk := f.cell.Data().(*SubKeyListVk)
+
 	if vk.DataOffset() == 0 {
-		return 0, nil
+		return 0, io.EOF
 	}
 
 	if vk.DataSize() == 0 {
-		return 0, nil
+		return 0, io.EOF
 	}
 
-	isSet := vk.DataSize()&0x80000000 > 0
-	// dataSize := vk.DataSize()
-	if isSet {
-		// dataSize -= 0x80000000
-		data := i32tob(vk.DataOffset())
-		return copy(i, data), nil
+	if f.data == nil {
+		isSet := vk.DataSize()&0x80000000 > 0
+		// dataSize := vk.DataSize()
+		var data []byte
+		if isSet {
+			// dataSize -= 0x80000000
+			data = i32tob(vk.DataOffset())
+			// return copy(i, data), io.EOF
+		} else {
+			_, err := f.reader.Seek(int64(vk.DataOffset())+0x1000+4, io.SeekStart)
+			if err != nil {
+				return 0, err
+			}
+
+			if vk.DataSize() > 16383*2 {
+				return 0, errors.New("entry too large")
+			}
+			d := make([]byte, vk.DataSize())
+			_, err = io.ReadAtLeast(f.reader, d, int(vk.DataSize()))
+			if err != nil {
+				return 0, err
+			}
+			data = d[:vk.DataSize()]
+		}
+
+		f.data = bytes.NewReader(data)
 	}
 
-	_, err := f.r.Seek(int64(vk.DataOffset())+0x1000, io.SeekStart)
-	if err != nil {
-		return 0, err
-	}
-
-	return f.r.Read(i)
+	return f.data.Read(i)
 }
 
 func (f *File) Close() error {
@@ -246,21 +270,49 @@ func i32tob(val uint32) []byte {
 	return r
 }
 
-func getCell(offset int64, f io.ReadSeeker, regf *Regf) (*HiveBinCell, error) {
-	_, err := f.Seek(offset, io.SeekStart)
+func getCell(offset int64, r io.ReadSeeker, regf *Regf) (*HiveBinCell, error) {
+	_, err := r.Seek(offset, io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
 
 	cell := &HiveBinCell{}
-	err = cell.Decode(f, regf, regf)
+	err = cell.Decode(r, regf, regf)
 	if err != nil {
 		return nil, err
 	}
 
 	if bytes.Equal(cell.Identifier(), []byte{0x00, 0x00}) {
-		return nil, errors.New("nope")
+		return nil, errors.New("invalid cell")
 	}
 
 	return cell, nil
+}
+
+func DecodeRegSz(b []byte) (string, error) {
+	s, err := DecodeUTF16(b)
+	if err != nil {
+		return "", err
+	}
+	return s[:len(s)-1], err
+}
+
+func DecodeUTF16(b []byte) (string, error) {
+	if len(b)%2 != 0 {
+		return "", fmt.Errorf("must have even length byte slice")
+	}
+
+	u16s := make([]uint16, 1)
+	ret := &bytes.Buffer{}
+	b8buf := make([]byte, 4)
+
+	lb := len(b)
+	for i := 0; i < lb; i += 2 {
+		u16s[0] = uint16(b[i]) + (uint16(b[i+1]) << 8)
+		r := utf16.Decode(u16s)
+		n := utf8.EncodeRune(b8buf, r[0])
+		ret.Write(b8buf[:n])
+	}
+
+	return ret.String(), nil
 }

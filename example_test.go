@@ -1,20 +1,21 @@
 package regffs_test
 
 import (
+	"fmt"
 	"github.com/forensicanalysis/regffs"
 	"io/fs"
-	"log"
 	"os"
 )
 
 func Example() {
-	f, _ := os.Open("testdata/NTUSER.DAT")
+	f, _ := os.Open("testdata/SYSTEM")
 
 	// init file system
 	fsys, _ := regffs.New(f)
 
-	fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
-		log.Println(path)
-		return err
-	})
+	// print all paths
+	b, _ := fs.ReadFile(fsys, "ControlSet001/Control/ComputerName/ComputerName/ComputerName")
+	s, _ := regffs.DecodeRegSz(b)
+	fmt.Println(s)
+	// Output: WKS-WIN732BITA
 }

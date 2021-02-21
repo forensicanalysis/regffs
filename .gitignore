@@ -1,3 +1,5 @@
 tree
 .idea
 .DS_Store
+*.out
+*.test
