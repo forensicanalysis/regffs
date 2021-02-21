@@ -219,9 +219,9 @@ func (f *File) Read(i []byte) (int, error) {
 	}
 
 	isSet := vk.DataSize()&0x80000000 > 0
-	dataSize := vk.DataSize()
+	// dataSize := vk.DataSize()
 	if isSet {
-		dataSize -= 0x80000000
+		// dataSize -= 0x80000000
 		data := i32tob(vk.DataOffset())
 		return copy(i, data), nil
 	}
@@ -247,10 +247,16 @@ func i32tob(val uint32) []byte {
 }
 
 func getCell(offset int64, f io.ReadSeeker, regf *Regf) (*HiveBinCell, error) {
-	f.Seek(offset, io.SeekStart)
+	_, err := f.Seek(offset, io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
 
 	cell := &HiveBinCell{}
-	cell.Decode(f, regf, regf)
+	err = cell.Decode(f, regf, regf)
+	if err != nil {
+		return nil, err
+	}
 
 	if bytes.Equal(cell.Identifier(), []byte{0x00, 0x00}) {
 		return nil, errors.New("nope")

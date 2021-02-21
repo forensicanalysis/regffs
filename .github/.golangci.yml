@@ -7,6 +7,7 @@ run:
 
   skip-files:
     - ".*\\.generated\\.*."
+    - ".*\\.ksy.go"
 
 # all available settings of specific linters
 linters-settings:
@@ -42,7 +43,7 @@ linters:
     - gocritic # The most opinionated Go source code linter
     - gocyclo # Computes and checks the cyclomatic complexity of functions
     - godot # Check if comments end in a period
-    - godox # Tool for detection of FIXME, TODO and other comment keywords
+    # - godox # Tool for detection of FIXME, TODO and other comment keywords
     # - gofmt # Gofmt checks whether code was gofmt-ed. By default this tool runs with -s option to check for code simplification
     # - goimports # Goimports does everything that gofmt does. Additionally it checks unused imports
     - golint # Golint differs from gofmt. Gofmt reformats Go source code, whereas golint prints out style mistakes
@@ -59,7 +60,7 @@ linters:
     - misspell # Finds commonly misspelled English words in comments
     - nakedret # Finds naked returns in functions greater than a specified function length
     - nestif # Reports deeply nested if statements
-    - prealloc # Finds slice declarations that could potentially be preallocated
+    # - prealloc # Finds slice declarations that could potentially be preallocated
     - rowserrcheck # checks whether Err of rows is checked successfully
     - scopelint # Scopelint checks for unpinned variables in go programs
     - staticcheck # Staticcheck is a go vet on steroids, applying a ton of static analysis checks
