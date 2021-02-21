@@ -228,34 +228,42 @@ func (f *File) Read(i []byte) (int, error) {
 	}
 
 	if f.data == nil {
-		isSet := vk.DataSize()&0x80000000 > 0
-		// dataSize := vk.DataSize()
-		var data []byte
-		if isSet {
-			// dataSize -= 0x80000000
-			data = i32tob(vk.DataOffset())
-			// return copy(i, data), io.EOF
-		} else {
-			_, err := f.reader.Seek(int64(vk.DataOffset())+0x1000+4, io.SeekStart)
-			if err != nil {
-				return 0, err
-			}
-
-			if vk.DataSize() > 16383*2 {
-				return 0, errors.New("entry too large")
-			}
-			d := make([]byte, vk.DataSize())
-			_, err = io.ReadAtLeast(f.reader, d, int(vk.DataSize()))
-			if err != nil {
-				return 0, err
-			}
-			data = d[:vk.DataSize()]
+		err := f.loadData(vk)
+		if err != nil {
+			return 0, err
 		}
-
-		f.data = bytes.NewReader(data)
 	}
 
 	return f.data.Read(i)
+}
+
+func (f *File) loadData(vk *SubKeyListVk) error {
+	isSet := vk.DataSize()&0x80000000 > 0
+	// dataSize := vk.DataSize()
+	var data []byte
+	if isSet {
+		// dataSize -= 0x80000000
+		data = i32tob(vk.DataOffset())
+		// return copy(i, data), io.EOF
+	} else {
+		_, err := f.reader.Seek(int64(vk.DataOffset())+0x1000+4, io.SeekStart)
+		if err != nil {
+			return err
+		}
+
+		if vk.DataSize() > 16383*2 {
+			return errors.New("entry too large")
+		}
+		d := make([]byte, vk.DataSize())
+		_, err = io.ReadAtLeast(f.reader, d, int(vk.DataSize()))
+		if err != nil {
+			return err
+		}
+		data = d[:vk.DataSize()]
+	}
+
+	f.data = bytes.NewReader(data)
+	return nil
 }
 
 func (f *File) Close() error {
