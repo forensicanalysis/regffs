@@ -6,6 +6,23 @@
 
 Read Windows registry files (regf) as [io/fs.FS](https://golang.org/pkg/io/fs/#FS).
 
+# Example
+
+``` go
+func main() {
+	f, _ := os.Open("testdata/SYSTEM")
+
+	// init file system
+	fsys, _ := regffs.New(f)
+
+	// print all paths
+	b, _ := fs.ReadFile(fsys, "ControlSet001/Control/ComputerName/ComputerName/ComputerName")
+	s, _ := regffs.DecodeRegSz(b)
+	fmt.Println(s)
+	// Output: WKS-WIN732BITA
+}
+```
+
 # License
 
 `testdata` is from https://github.com/log2timeline/plaso and therefore licenced
