@@ -3,17 +3,19 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/forensicanalysis/fscmd"
-	"github.com/forensicanalysis/regffs"
-	"github.com/spf13/cobra"
 	"io/fs"
 	"os"
+
+	"github.com/spf13/cobra"
+
+	"github.com/forensicanalysis/fscmd"
+	"github.com/forensicanalysis/regffs"
 )
 
 func main() {
 	cmd := fscmd.FSCommand(func(c *cobra.Command, args []string) (fs.FS, []string, error) {
 		if len(args) < 1 {
-			c.Help()
+			_ = c.Help()
 			return nil, nil, errors.New("missing arguments")
 		}
 		f, err := os.Open(args[0])
@@ -26,7 +28,7 @@ func main() {
 	cmd.Use = "regffs"
 	cmd.Short = "registry viewer"
 	for _, c := range cmd.Commands() {
-		c.Use = c.Use + " [file]"
+		c.Use += " [file]"
 	}
 	if err := cmd.Execute(); err != nil {
 		fmt.Println(err)
